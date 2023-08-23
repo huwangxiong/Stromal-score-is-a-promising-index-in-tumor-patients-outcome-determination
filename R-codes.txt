@@ -1,0 +1,139 @@
+#lasso feature selection
+rm(list=ls())
+gc()
+library("glmnet")
+library("survival")
+library("survminer")#froest plot
+a<-read.table(file.choose(),header=T,sep='\t')
+x<-a[,4:ncol(a)]
+x1<-as.matrix(x)
+cvfit = cv.glmnet(x1, Surv(a$days,a$status),family = "cox")
+plot(cvfit) 
+cvfit$lambda.min
+cvfit$lambda.1se 
+coef.min = coef(cvfit, s = "lambda.min") 
+active.min = which(coef.min != 0)  The left vertical line in our plot shows us where the CV-error curve hits its minimum.
+#The right vertical line shows us the most regularized model with CV-error within 1 standard deviation of the minimum
+index.min = coef.min[active.min]
+active.min #return the variable left in model 
+index.min  #return corresponding coefficient of variable
+geneids <- colnames(x1)[active.min]
+combine<-cbind(geneids, index.min)
+combine
+#rs=risk score
+rs <- as.matrix(a[, geneids]) %*% as.matrix(index.min)
+good.prog <- (rs < median(rs))
+crc_surv<-Surv(a$days,a$status)
+fit <- survfit(crc_surv ~ good.prog)
+plot(fit, lwd = 2, lty = c(1,1), col = c("red","blue"), xlab = 'Time (months)', ylab = 'Survival Probability',mark.time=TRUE)
+legend("topright", legend=c('PI > median', 'PI < median'), lty = c(1,1), col = c("red", "blue"), lwd = 2)
+title("TCGA")
+x.test <- as.data.frame(a[-1, ])
+logrank <- survdiff(crc_surv ~ good.prog, data = a, rho = 0)
+logrank
+legend("bottom", legend='P = 0.0065', lwd = 2)
+p.median <- 1-pchisq(logrank$chisq, 1)
+pi <- coxph(crc_surv ~ rs)
+pi1 <- summary(coxph(crc_surv ~ rs))
+pi1
+summary(fit, time = 60) 
+summary(fit, times=seq(0, 100, 20))
+
+#process GSE39582 and GSE62254 array datasets
+rm(list=ls())
+gc()
+setwd("E:/GSE39582")
+library(affy)
+library(tcltk)
+filters <- matrix(c("CEL file", ".[CEL][Cc][Ee][Ll]", "All", ".*"), ncol = 2, byrow = T)
+cel.files <- tk_choose.files(caption = "Select CELs", multi = TRUE,filters = filters, index = 1)
+basename(cel.files)
+data.raw <- ReadAffy(filenames = cel.files)
+eset.mas5 <- mas5(data.raw)
+eset.mas5_t<-t(as.matrix(eset.mas5))
+write.table(eset.mas5,file="E:\\GSE39582\\MAS5_process.txt",sep="\t",quote=F)
+
+
+#select probe with the highest expression level for gene
+a=read.table(file.choose(),sep="\t",header=TRUE)
+rmDupID <-function(a=matrix(c(1,1:5,2,2:6,2,3:7),ncol=6)){
+  exprSet=a[,-1]
+  rowMeans=apply(exprSet,1,function(x) mean(as.numeric(x),na.rm=T))
+  a=a[order(rowMeans,decreasing=T),]
+  exprSet=a[!duplicated(a[,1]),]
+  #exprSet=apply(exprSet,2,as.numeric)
+  exprSet=exprSet[!is.na(exprSet[,1]),]
+  rownames(exprSet)=exprSet[,1]
+  exprSet=exprSet[,-1]
+  return(exprSet)
+}
+exprSet=rmDupID(a)
+write.table(exprSet,file="E:/GSE39582/gene_level.txt",sep="\t",quote=F)
+
+#Caculate the proportions of lymphocytes and stromal cells infiltrated in tumor tissue by xCell
+rm(list = ls())
+options( repos<- c(CRAN="https://mirrors.tuna.tsinghua.edu.cn/CRAN/"))
+options("BioC_mirror"<- "https://mirrors.ustc.edu.cn/bioc/")
+options(stringsAsFactors = F)
+Sys.setlocale("LC_ALL","English")
+devtools::install_github('dviraran/xCell')
+library(xCell)
+exp <- RNAseq_TPM_tumor[,-c(1,3)]
+row.names(exp) <- exp$gene_name
+exp$gene_name <- NULL
+exp <- as.matrix(exp)
+head(exp[1:6,1:4])
+scores <-  rawEnrichmentAnalysis(exp, 
+                                 signatures = xCell.data$signatures,
+                                 genes = xCell.data$genes, 
+                                 parallel.sz = 4,
+                                 parallel.type = "SOCK")
+
+head(scores[1:6,1:4])
+xCell<- xCellAnalysis(exp)
+#if RNA-seq data
+xCell_RNAseq<- xCellAnalysis(exp,rnaseq = T)
+head(xCell_RNAseq[1:6,1:4])
+write.table(xCell_RNAseq,file="D:\\PRJs\\prj_TIME\\xCell_result.txt",sep="\t",quote=F)
+
+
+#Infer stromal- and immune-score in tumor samples by ESTIMATE
+library(estimate)
+in.file="D:\\PRJs\\prj_TIME\\CRC\\GSE39582\\data.txt"
+out.file.score="D:\\PRJs\\prj_TIME\\CRC\\GSE39582\\data_estimate.txt"
+plf="affymetrix"
+#plf="illumina" for RNAseq data
+out.file=tempfile(pattern="estimate",fileext = ".gct")
+out.file2=tempfile(pattern="estimate",fileext = ".gct")
+outputGCT(in.file,out.file)
+estimateScore(out.file,out.file2,platform = plf)
+score=read.csv(out.file2,sep="\t",skip=2,row.names = 1,stringsAsFactors = F)
+score=t(score)
+coln=colnames(score)
+score=score[-1,]
+score=t(apply(score,1,function(x){return(as.numeric(gsub(' ','',x)))}))
+colnames(score)=coln
+write.table(cbind(sample=row.names(score),score),file=out.file.score,sep="\t",quote=F,row.names = F)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
